@@ -15,6 +15,7 @@ use veridian_slang::slang_compile;
 use walkdir::DirEntry;
 #[cfg(feature = "slang")]
 use walkdir::WalkDir;
+use log::{debug, trace};
 
 #[cfg(feature = "slang")]
 pub fn get_diagnostics(
@@ -71,9 +72,15 @@ pub fn get_diagnostics(
     conf: &ProjectConfig,
 ) -> PublishDiagnosticsParams {
     if !(cfg!(test) && (uri.to_string().starts_with("file:///test"))) {
+        debug!("Verilator enabled: {}", conf.verilator.syntax.enabled);
+        debug!("Verible enabled: {}", conf.verible.syntax.enabled);
         let diagnostics = {
             if conf.verilator.syntax.enabled {
                 if let Ok(path) = uri.to_file_path() {
+                    debug!("rope: {:#?}", rope); 
+                    debug!("Path: {:#?}", path); 
+                    debug!("verilator path: {:#?}", &conf.verilator.syntax.path); 
+                    debug!("verilator args: {:#?}", &conf.verilator.syntax.args); 
                     verilator_syntax(
                         rope,
                         path,
@@ -82,6 +89,7 @@ pub fn get_diagnostics(
                     )
                     .unwrap_or_default()
                 } else {
+                    debug!("89: Returning empty vec");
                     Vec::new()
                 }
             } else if conf.verible.syntax.enabled {
@@ -91,6 +99,8 @@ pub fn get_diagnostics(
                 Vec::new()
             }
         };
+        
+        debug!("Diagnostics: {:#?}", diagnostics);
         PublishDiagnosticsParams {
             uri,
             diagnostics,
@@ -220,11 +230,17 @@ fn verilator_syntax(
     verilator_syntax_path: &str,
     verilator_syntax_args: &[String],
 ) -> Option<Vec<Diagnostic>> {
+
+    let split_args: Vec<&str> = verilator_syntax_args
+    .iter()
+    .flat_map(|s| s.split_whitespace())
+    .collect();
+
     let mut child = Command::new(verilator_syntax_path)
         .stdin(Stdio::piped())
         .stderr(Stdio::piped())
         .stdout(Stdio::piped())
-        .args(verilator_syntax_args)
+        .args(split_args)
         .arg(file_path.to_str()?)
         .spawn()
         .ok()?;
@@ -239,6 +255,9 @@ fn verilator_syntax(
     // write file to stdin, read output from stdout
     rope.write_to(child.stdin.as_mut()?).ok()?;
     let output = child.wait_with_output().ok()?;
+
+    debug!("Verilator output: {:#?}", output);
+
     if !output.status.success() {
         let mut diags: Vec<Diagnostic> = Vec::new();
         let raw_output = String::from_utf8(output.stderr).ok()?;
