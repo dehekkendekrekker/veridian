@@ -2,10 +2,8 @@ use crate::sources::*;
 
 use crate::completion::keyword::*;
 use flexi_logger::LoggerHandle;
-use log::{error, debug, info, warn};
-use path_clean::PathClean;
+use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
-use std::env::current_dir;
 use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
@@ -170,25 +168,12 @@ fn read_config(root_uri: Option<Url>) -> anyhow::Result<ProjectConfig> {
     Ok(config)
 }
 
-// convert string path to absolute path
-fn absolute_path(path_str: &str) -> Option<PathBuf> {
-    let path = PathBuf::from(path_str);
-    if !path.exists() {
-        return None;
-    }
-    if !path.has_root() {
-        Some(current_dir().unwrap().join(path).clean())
-    } else {
-        Some(path)
-    }
-}
+
 
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
         // grab include dirs and source dirs from config, and convert to abs path
-        let mut inc_dirs = self.server.srcs.include_dirs.write().unwrap();
-        let mut src_dirs = self.server.srcs.source_dirs.write().unwrap();
         match read_config(params.root_uri) {
             Ok(conf) => {
                 let mut log_handle = self.server.log_handle.lock().unwrap();
