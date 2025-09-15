@@ -69,14 +69,8 @@ pub enum LogLevel {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ProjectConfig {
-    // if true, recursively search the working directory for files to run diagnostics on
-    pub auto_search_workdir: bool,
-    // list of directories with header files
-    pub include_dirs: Vec<String>,
-    // list of directories to recursively search for SystemVerilog/Verilog sources
-    pub source_dirs: Vec<String>,
     // config options for verible tools
-    pub verible: Verible,
+    pub verible_lint: VeribleLint,
     // config options for verilator tools
     pub verilator: Verilator,
     // log level
@@ -88,31 +82,12 @@ pub struct ProjectConfig {
 impl Default for ProjectConfig {
     fn default() -> Self {
         ProjectConfig {
-            auto_search_workdir: true,
-            include_dirs: Vec::new(),
-            source_dirs: Vec::new(),
-            verible: Verible::default(),
+            verible_lint: VeribleLint::default(),
             verilator: Verilator::default(),
             log_level: LogLevel::Info,
             project_path: PathBuf::new()
         }
     }
-}
-
-#[derive(Default, Debug, Serialize, Deserialize)]
-#[serde(default)]
-pub struct Verible {
-    pub lint: VeribleLint,
-    pub syntax: VeribleSyntax,
-    pub format: VeribleFormat,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(default)]
-pub struct VeribleSyntax {
-    pub enabled: bool,
-    pub path: String,
-    pub args: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -124,17 +99,6 @@ pub struct VeribleLint {
 }
 
 
-
-impl Default for VeribleSyntax {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            path: "verible-verilog-syntax".to_string(),
-            args: Vec::new(),
-        }
-    }
-}
-
 impl Default for VeribleLint {
     fn default() -> Self {
         Self {
@@ -145,52 +109,26 @@ impl Default for VeribleLint {
     }
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
-#[serde(default)]
-pub struct Verilator {
-    pub syntax: VerilatorSyntax,
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(default)]
-pub struct VerilatorSyntax {
+pub struct Verilator {
     pub enabled: bool,
     pub path: String,
     pub args: Vec<String>,
 }
 
-impl Default for VerilatorSyntax {
+impl Default for Verilator {
     fn default() -> Self {
         Self {
             enabled: true,
             path: "verilator".to_string(),
             args: vec![
                 "--lint-only".to_string(),
-                "--sv".to_string(),
                 "-Wall".to_string(),
             ],
         }
     }
 }
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(default)]
-pub struct VeribleFormat {
-    pub enabled: bool,
-    pub path: String,
-    pub args: Vec<String>,
-}
-
-impl Default for VeribleFormat {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            path: "verible-verilog-format".to_string(),
-            args: Vec::new(),
-        }
-    }
-}
-
 
 fn read_config(root_uri: Option<Url>) -> anyhow::Result<ProjectConfig> {
     let path = root_uri
@@ -253,10 +191,6 @@ impl LanguageServer for Backend {
         let mut src_dirs = self.server.srcs.source_dirs.write().unwrap();
         match read_config(params.root_uri) {
             Ok(conf) => {
-                inc_dirs.extend(conf.include_dirs.iter().filter_map(|x| absolute_path(x)));
-                debug!("{:#?}", inc_dirs);
-                src_dirs.extend(conf.source_dirs.iter().filter_map(|x| absolute_path(x)));
-                debug!("{:#?}", src_dirs);
                 let mut log_handle = self.server.log_handle.lock().unwrap();
                 let log_handle = log_handle.as_mut();
                 if let Some(handle) = log_handle {
@@ -279,36 +213,21 @@ impl LanguageServer for Backend {
 
         let mut conf = self.server.conf.write().unwrap();
         info!("Current working directory: {}/", conf.project_path.display());
-        conf.verible.syntax.enabled   = conf.verible.syntax.enabled && which(&conf.verible.syntax.path).is_ok();
-        conf.verible.lint.enabled   = conf.verible.lint.enabled && which(&conf.verible.lint.path).is_ok();
-        conf.verilator.syntax.enabled = conf.verilator.syntax.enabled && which(&conf.verilator.syntax.path).is_ok();
+        conf.verible_lint.enabled   = conf.verible_lint.enabled && which(&conf.verible_lint.path).is_ok();
+        conf.verilator.enabled = conf.verilator.enabled && which(&conf.verilator.path).is_ok();
 
-        if conf.verilator.syntax.enabled {
-            info!("Enabled linting with {}", conf.verilator.syntax.path)
+        if conf.verilator.enabled {
+            info!("Enabled linting with {}", conf.verilator.path)
         } else {
             info!("Disabled linting with verilator");
         }
-        if conf.verible.syntax.enabled { 
-            info!("enabled linting with {}", conf.verible.syntax.path)
-        } else {
-            info!("Disabled linting with verible syntax");
-        }
-        if conf.verible.lint.enabled { 
-            info!("enabled linting with {}", conf.verible.lint.path)
+       if conf.verible_lint.enabled { 
+            info!("enabled linting with {}", conf.verible_lint.path)
         } else {
             info!("Disabled linting with verible lint");
         }
 
-
-        conf.verible.format.enabled = conf.verible.format.enabled && which(&conf.verible.format.path).is_ok();
-        if conf.verible.format.enabled {
-            info!("enabled formatting with {}",conf.verible.format.path);
-        } else {
-            info!("formatting unavailable");
-        }
-        drop(inc_dirs);
-        drop(src_dirs);
-        // parse all source files found from walking source dirs and include dirs
+       // parse all source files found from walking source dirs and include dirs
         self.server.srcs.init();
         Ok(InitializeResult {
             server_info: None,
@@ -341,8 +260,6 @@ impl LanguageServer for Backend {
                 definition_provider: Some(OneOf::Left(true)),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 document_symbol_provider: Some(OneOf::Left(true)),
-                document_formatting_provider: Some(OneOf::Left(conf.verible.format.enabled)),
-                document_range_formatting_provider: Some(OneOf::Left(conf.verible.format.enabled)),
                 document_highlight_provider: Some(OneOf::Left(true)),
                 ..ServerCapabilities::default()
             },

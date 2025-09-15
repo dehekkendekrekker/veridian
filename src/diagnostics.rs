@@ -16,14 +16,14 @@ pub fn get_diagnostics(
 ) -> PublishDiagnosticsParams {
     if !(cfg!(test) && (uri.to_string().starts_with("file:///test"))) {
         let mut diagnostics : Vec<Diagnostic> = Vec::new();
-        if conf.verilator.syntax.enabled {
+        if conf.verilator.enabled {
             diagnostics.extend(
                 if let Ok(path) = uri.to_file_path() {
                     verilator_syntax(
                         rope,
                         path,
-                        &conf.verilator.syntax.path,
-                        &conf.verilator.syntax.args,
+                        &conf.verilator.path,
+                        &conf.verilator.args,
                         &conf.project_path,
                     )
                     .unwrap_or_default()
@@ -34,20 +34,14 @@ pub fn get_diagnostics(
             );
         }
 
-
-        if conf.verible.syntax.enabled {
-            diagnostics.extend(
-                verible_syntax(rope, &conf.verible.syntax.path, &conf.verible.syntax.args)
-                    .unwrap_or_default());
-        }
-        if conf.verible.lint.enabled {
+       if conf.verible_lint.enabled {
             diagnostics.extend(
                 if let Ok(path) = uri.to_file_path() {
                     verible_lint(
                         rope,
                         path,
-                        &conf.verible.lint.path,
-                        &conf.verible.syntax.args,
+                        &conf.verible_lint.path,
+                        &conf.verible_lint.args,
                         &conf.project_path,
                     )
                     .unwrap_or_default()
@@ -116,7 +110,7 @@ fn verible_lint (
     rope.write_to(child.stdin.as_mut()?).ok()?;
     let output = child.wait_with_output().ok()?;
 
-    debug!("Verible lint output: {:#?}", output);
+    debug!("verible_lint output: {:#?}", output);
 
     if !output.status.success() {
         let mut diags: Vec<Diagnostic> = Vec::new();
@@ -150,11 +144,6 @@ fn verible_lint (
 
 
 }
-
-
-
-
-
 
 /// syntax checking using verilator --lint-only
 fn verilator_syntax(
@@ -241,178 +230,5 @@ fn verilator_syntax(
     }
 }
 
-/// syntax checking using verible-verilog-syntax
-fn verible_syntax(
-    rope: &Rope,
-    verible_syntax_path: &str,
-    verible_syntax_args: &[String],
-) -> Option<Vec<Diagnostic>> {
-    let mut child = Command::new(verible_syntax_path)
-        .stdin(Stdio::piped())
-        .stderr(Stdio::piped())
-        .stdout(Stdio::piped())
-        .args(verible_syntax_args)
-        .arg("-")
-        .spawn()
-        .ok()?;
 
-    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    let re = RE.get_or_init(|| {
-        Regex::new(
-            r"^.+:(?P<line>\d*):(?P<startcol>\d*)(?:-(?P<endcol>\d*))?:\s(?P<message>.*)\s.*$",
-        )
-        .unwrap()
-    });
-    // write file to stdin, read output from stdout
-    rope.write_to(child.stdin.as_mut()?).ok()?;
-    let output = child.wait_with_output().ok()?;
 
-    debug!("Verible output: {:#?}", output);
-
-    if !output.status.success() {
-        let mut diags: Vec<Diagnostic> = Vec::new();
-        let raw_output = String::from_utf8(output.stdout).ok()?;
-        for error in raw_output.lines() {
-            let caps = re.captures(error)?;
-            let line: u32 = caps.name("line")?.as_str().parse().ok()?;
-            let startcol: u32 = caps.name("startcol")?.as_str().parse().ok()?;
-            let endcol: Option<u32> = match caps.name("endcol").map(|e| e.as_str().parse()) {
-                Some(Ok(e)) => Some(e),
-                None => None,
-                Some(Err(_)) => return None,
-            };
-            let start_pos = Position::new(line - 1, startcol - 1);
-            let end_pos = Position::new(line - 1, endcol.unwrap_or(startcol) - 1);
-            diags.push(Diagnostic::new(
-                Range::new(start_pos, end_pos),
-                Some(DiagnosticSeverity::ERROR),
-                None,
-                Some("verible".to_string()),
-                caps.name("message")?.as_str().to_string(),
-                None,
-                None,
-            ));
-        }
-        Some(diags)
-    } else {
-        None
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::support::test_init;
-    use std::fs::File;
-    use std::io::Write;
-    use tempdir::TempDir;
-
-    #[test]
-   #[test]
-    fn test_unsaved_file() {
-        test_init();
-        let uri = Url::parse("file://test.sv").unwrap();
-        get_diagnostics(
-            uri.clone(),
-            &Rope::default(),
-            vec![uri],
-            &ProjectConfig::default(),
-        );
-    }
-
-    #[test]
-    fn test_verible_syntax() {
-        let text = r#"module test;
-    logic abc;
-    logic abcd;
-
-  a
-endmodule
-"#;
-        let doc = Rope::from_str(text);
-        let errors = verible_syntax(&doc, "verible-verilog-syntax", &[])
-            .expect("verible-verilog-syntax not found, test can not run");
-        let expected: Vec<Diagnostic> = vec![Diagnostic {
-            range: Range {
-                start: Position {
-                    line: 5,
-                    character: 0,
-                },
-                end: Position {
-                    line: 5,
-                    character: 8,
-                },
-            },
-            severity: Some(DiagnosticSeverity::ERROR),
-            code: None,
-            source: Some("verible".to_string()),
-            message: "syntax error at token".to_string(),
-            related_information: None,
-            tags: None,
-            code_description: None,
-            data: None,
-        }];
-        assert_eq!(errors, expected);
-    }
-
-    #[test]
-    fn test_verilator_syntax() {
-        let text = r#"module test;
-    logic abc;
-    logic abcd;
-
-  a
-endmodule
-"#;
-        let doc = Rope::from_str(text);
-
-        // verilator can't read from stdin so we must create a temp dir to place our
-        // test file
-        let dir = TempDir::new("verilator_test").unwrap();
-        let file_path_1 = dir.path().join("test.sv");
-        let mut f = File::create(&file_path_1).unwrap();
-        f.write_all(text.as_bytes()).unwrap();
-        f.sync_all().unwrap();
-
-        let errors = verilator_syntax(
-            &doc,
-            file_path_1,
-            "verilator",
-            &[
-                "--lint-only".to_string(),
-                "--sv".to_string(),
-                "-Wall".to_string(),
-            ],
-        )
-        .expect("verilator not found, test can not run");
-
-        drop(f);
-        dir.close().unwrap();
-
-        let expected: Vec<Diagnostic> = vec![Diagnostic {
-            range: Range {
-                start: Position {
-                    line: 5,
-                    character: 0,
-                },
-                end: Position {
-                    line: 5,
-                    character: 0,
-                },
-            },
-            severity: Some(DiagnosticSeverity::ERROR),
-            code: None,
-            source: Some("verilator".to_string()),
-            message: "syntax error, unexpected endmodule, expecting IDENTIFIER or randomize"
-                .to_string(),
-            related_information: None,
-            tags: None,
-            code_description: None,
-            data: None,
-        }];
-        assert_eq!(errors[0].severity, expected[0].severity);
-        assert_eq!(errors[0].range.start.line, expected[0].range.start.line);
-        assert_eq!(errors[0].range.end.line, expected[0].range.end.line);
-        assert!(errors[0].message.contains("syntax error"));
-    }
-}
