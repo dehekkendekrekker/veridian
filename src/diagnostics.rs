@@ -91,13 +91,14 @@ pub fn get_diagnostics(
             );
         }
 
-        /*
+
+        debug!("Verible enabled: {:#?}", conf.verible.syntax.enabled);
+
         if conf.verible.syntax.enabled {
             diagnostics.extend(
                 verible_syntax(rope, &conf.verible.syntax.path, &conf.verible.syntax.args)
                     .unwrap_or_default());
         }
-*/
         PublishDiagnosticsParams {
             uri,
             diagnostics,

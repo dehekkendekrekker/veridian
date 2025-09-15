@@ -2,7 +2,7 @@ use crate::sources::*;
 
 use crate::completion::keyword::*;
 use flexi_logger::LoggerHandle;
-use log::{debug, info, warn};
+use log::{error, debug, info, warn};
 use path_clean::PathClean;
 use serde::{Deserialize, Serialize};
 use std::env::current_dir;
@@ -202,10 +202,12 @@ fn read_config(root_uri: Option<Url>) -> anyhow::Result<ProjectConfig> {
 
     let mut config: ProjectConfig = serde_yaml::from_str(&contents)?;
     if config.project_path.as_os_str().is_empty() {
-    config.project_path = config_path.parent()
-        .unwrap()
-        .to_path_buf();
-} 
+        config.project_path = config_path.parent()
+            .unwrap()
+            .to_path_buf();
+    } else if !config.project_path.is_dir() {
+        error!("Project path is not a directory: {}", config.project_path.display());
+    }
     Ok(config)
 }
 
@@ -251,19 +253,28 @@ impl LanguageServer for Backend {
                 warn!("found errors in config file: {:#?}", e);
             }
         }
+
+
+
         let mut conf = self.server.conf.write().unwrap();
-        conf.verible.syntax.enabled = which(&conf.verible.syntax.path).is_ok();
-        if cfg!(feature = "slang") {
-            info!("enabled linting with slang");
-        }
+        info!("Current working directory: {}/", conf.project_path.display());
+        conf.verible.syntax.enabled   = conf.verible.syntax.enabled && which(&conf.verible.syntax.path).is_ok();
+        conf.verilator.syntax.enabled = conf.verilator.syntax.enabled && which(&conf.verilator.syntax.path).is_ok();
+
         if conf.verilator.syntax.enabled {
-            info!("enabled linting with verilator")
-        } else if conf.verible.syntax.enabled {
-            info!("enabled linting with verible-verilog-syntax")
+            info!("Enabled linting with {}", conf.verilator.syntax.path)
+        } else {
+            info!("Disabled linting with verilator");
         }
-        conf.verible.format.enabled = which(&conf.verible.format.path).is_ok();
+        if conf.verible.syntax.enabled { 
+            info!("enabled linting with {}", conf.verible.syntax.path)
+        } else {
+            info!("Disabled linting with verible syntax");
+        }
+
+        conf.verible.format.enabled = conf.verible.format.enabled && which(&conf.verible.format.path).is_ok();
         if conf.verible.format.enabled {
-            info!("enabled formatting with verible-verilog-format");
+            info!("enabled formatting with {}",conf.verible.format.path);
         } else {
             info!("formatting unavailable");
         }
