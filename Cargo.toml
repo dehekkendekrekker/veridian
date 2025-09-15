@@ -4,9 +4,6 @@ version = "0.1.0"
 authors = ["Vivek Malneedi <vivekmalneedi@gmail.com>"]
 edition = "2018"
 
-[features]
-slang = ["veridian_slang"]
-
 [dependencies]
 sv-parser = "0.8.2"
 log = "0.4.19"
@@ -29,6 +26,3 @@ strum_macros = "0.26.1"
 [dev-dependencies]
 tempdir = "0.3.7"
 
-[dependencies.veridian_slang]
-optional = true
-path = "veridian-slang"
