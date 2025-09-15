@@ -24,7 +24,6 @@ pub fn get_diagnostics(
                         path,
                         &conf.verilator.path,
                         &conf.verilator.args,
-                        &conf.project_path,
                     )
                     .unwrap_or_default()
                 } else {
@@ -151,7 +150,6 @@ fn verilator_syntax(
     file_path: PathBuf,
     verilator_syntax_path: &str,
     verilator_syntax_args: &[String],
-    project_path: &PathBuf
 ) -> Option<Vec<Diagnostic>> {
 
     let split_args: Vec<&str> = verilator_syntax_args
@@ -159,9 +157,12 @@ fn verilator_syntax(
     .flat_map(|s| s.split_whitespace())
     .collect();
 
-    debug!("Current working directory: {:?}", project_path); 
+
+    let cwd = file_path.parent().unwrap();
+
+    debug!("Current working directory: {:?}", cwd); 
     let mut child = Command::new(verilator_syntax_path)
-        .current_dir(project_path)
+        .current_dir(cwd)
         .stdin(Stdio::piped())
         .stderr(Stdio::piped())
         .stdout(Stdio::piped())
