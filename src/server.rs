@@ -81,6 +81,8 @@ pub struct ProjectConfig {
     pub verilator: Verilator,
     // log level
     pub log_level: LogLevel,
+
+    pub project_path: PathBuf
 }
 
 impl Default for ProjectConfig {
@@ -92,6 +94,7 @@ impl Default for ProjectConfig {
             verible: Verible::default(),
             verilator: Verilator::default(),
             log_level: LogLevel::Info,
+            project_path: PathBuf::new()
         }
     }
 }
@@ -167,31 +170,43 @@ impl Default for VeribleFormat {
     }
 }
 
+
 fn read_config(root_uri: Option<Url>) -> anyhow::Result<ProjectConfig> {
     let path = root_uri
         .ok_or_else(|| anyhow::anyhow!("couldn't resolve workdir path"))?
         .to_file_path()
         .map_err(|_| anyhow::anyhow!("couldn't resolve workdir path"))?;
-    let mut config: Option<PathBuf> = None;
+    
+    let mut config_path: Option<PathBuf> = None;
     for dir in path.ancestors() {
-        let config_path = dir.join("veridian.yaml");
-        if config_path.exists() {
+        let yaml_path = dir.join("veridian.yaml");
+        if yaml_path.exists() {
             info!("found config: veridian.yaml");
-            config = Some(config_path);
+            config_path = Some(yaml_path);
             break;
         }
-        let config_path = dir.join("veridian.yml");
-        if config_path.exists() {
+        let yml_path = dir.join("veridian.yml");
+        if yml_path.exists() {
             info!("found config: veridian.yml");
-            config = Some(config_path);
+            config_path = Some(yml_path);
             break;
         }
     }
+    
+    let config_path = config_path.ok_or_else(|| anyhow::anyhow!("unable to find config file"))?;
+    
     let mut contents = String::new();
-    File::open(config.ok_or_else(|| anyhow::anyhow!("unable to read config file"))?)?
-        .read_to_string(&mut contents)?;
+    File::open(&config_path)?.read_to_string(&mut contents)?;
+    
     info!("reading config file");
-    Ok(serde_yaml::from_str(&contents)?)
+
+    let mut config: ProjectConfig = serde_yaml::from_str(&contents)?;
+    if config.project_path.as_os_str().is_empty() {
+    config.project_path = config_path.parent()
+        .unwrap()
+        .to_path_buf();
+} 
+    Ok(config)
 }
 
 // convert string path to absolute path
