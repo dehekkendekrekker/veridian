@@ -102,6 +102,7 @@ impl Default for ProjectConfig {
 #[derive(Default, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Verible {
+    pub lint: VeribleLint,
     pub syntax: VeribleSyntax,
     pub format: VeribleFormat,
 }
@@ -114,11 +115,31 @@ pub struct VeribleSyntax {
     pub args: Vec<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VeribleLint {
+    pub enabled: bool,
+    pub path: String,
+    pub args: Vec<String>,
+}
+
+
+
 impl Default for VeribleSyntax {
     fn default() -> Self {
         Self {
             enabled: true,
             path: "verible-verilog-syntax".to_string(),
+            args: Vec::new(),
+        }
+    }
+}
+
+impl Default for VeribleLint {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            path: "verible-verilog-lint".to_string(),
             args: Vec::new(),
         }
     }
@@ -259,6 +280,7 @@ impl LanguageServer for Backend {
         let mut conf = self.server.conf.write().unwrap();
         info!("Current working directory: {}/", conf.project_path.display());
         conf.verible.syntax.enabled   = conf.verible.syntax.enabled && which(&conf.verible.syntax.path).is_ok();
+        conf.verible.lint.enabled   = conf.verible.lint.enabled && which(&conf.verible.lint.path).is_ok();
         conf.verilator.syntax.enabled = conf.verilator.syntax.enabled && which(&conf.verilator.syntax.path).is_ok();
 
         if conf.verilator.syntax.enabled {
@@ -271,6 +293,12 @@ impl LanguageServer for Backend {
         } else {
             info!("Disabled linting with verible syntax");
         }
+        if conf.verible.lint.enabled { 
+            info!("enabled linting with {}", conf.verible.lint.path)
+        } else {
+            info!("Disabled linting with verible lint");
+        }
+
 
         conf.verible.format.enabled = conf.verible.format.enabled && which(&conf.verible.format.path).is_ok();
         if conf.verible.format.enabled {

@@ -35,13 +35,28 @@ pub fn get_diagnostics(
         }
 
 
-        debug!("Verible enabled: {:#?}", conf.verible.syntax.enabled);
-
         if conf.verible.syntax.enabled {
             diagnostics.extend(
                 verible_syntax(rope, &conf.verible.syntax.path, &conf.verible.syntax.args)
                     .unwrap_or_default());
         }
+        if conf.verible.lint.enabled {
+            diagnostics.extend(
+                if let Ok(path) = uri.to_file_path() {
+                    verible_lint(
+                        rope,
+                        path,
+                        &conf.verible.lint.path,
+                        &conf.verible.syntax.args,
+                        &conf.project_path,
+                    )
+                    .unwrap_or_default()
+                } else {
+                    error!("Path not ok: {:#?}", uri.to_file_path());
+                    Vec::new()
+                }
+            );
+       }
         PublishDiagnosticsParams {
             uri,
             diagnostics,
@@ -73,6 +88,73 @@ fn verilator_severity(severity: &str) -> Option<DiagnosticSeverity> {
         _ => Some(DiagnosticSeverity::INFORMATION),
     }
 }
+
+
+fn verible_lint (
+    rope: &Rope,
+    file_path: PathBuf,
+    binary_path: &String,
+    args: &[String],
+    cwd: &PathBuf
+) -> Option<Vec<Diagnostic>> {
+    let mut child = Command::new(binary_path)
+        .current_dir(cwd)
+        .stdin(Stdio::piped())
+        .stderr(Stdio::piped())
+        .stdout(Stdio::piped())
+        .args(args)
+        .arg(file_path.to_str()?)
+        .spawn()
+        .ok()?;
+
+
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| {
+        Regex::new(r"^.+:(?P<line>\d*):(?P<startcol>\d*)(?:-(?P<endcol>\d*))?:\s(?P<message>.*)\s.*$").unwrap()
+    });
+    // write file to stdin, read output from stdout
+    rope.write_to(child.stdin.as_mut()?).ok()?;
+    let output = child.wait_with_output().ok()?;
+
+    debug!("Verible lint output: {:#?}", output);
+
+    if !output.status.success() {
+        let mut diags: Vec<Diagnostic> = Vec::new();
+        let raw_output = String::from_utf8(output.stderr).ok()?;
+        debug!("Lines: {:#?}", raw_output.lines());
+        for error in raw_output.lines() {
+            let caps = re.captures(error)?;
+            let line: u32 = caps.name("line")?.as_str().parse().ok()?;
+            let startcol: u32 = caps.name("startcol")?.as_str().parse().ok()?;
+            let endcol: Option<u32> = match caps.name("endcol").map(|e| e.as_str().parse()) {
+                Some(Ok(e)) => Some(e),
+                None => None,
+                Some(Err(_)) => return None,
+            };
+            let start_pos = Position::new(line - 1, startcol - 1);
+            let end_pos = Position::new(line - 1, endcol.unwrap_or(startcol) - 1);
+            diags.push(Diagnostic::new(
+                Range::new(start_pos, end_pos),
+                Some(DiagnosticSeverity::ERROR),
+                None,
+                Some("verible".to_string()),
+                caps.name("message")?.as_str().to_string(),
+                None,
+                None,
+            ));
+        }
+        Some(diags)
+    } else {
+        None
+    }
+
+
+}
+
+
+
+
+
 
 /// syntax checking using verilator --lint-only
 fn verilator_syntax(
