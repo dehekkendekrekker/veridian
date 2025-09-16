@@ -90,12 +90,21 @@ fn verible_lint (
     args: &[String],
     cwd: &PathBuf
 ) -> Option<Vec<Diagnostic>> {
+
+    let split_args: Vec<&str> = args
+    .iter()
+    .flat_map(|s| s.split_whitespace())
+    .collect();
+
+
+
+
     let mut child = Command::new(binary_path)
         .current_dir(cwd)
         .stdin(Stdio::piped())
         .stderr(Stdio::piped())
         .stdout(Stdio::piped())
-        .args(args)
+        .args(split_args)
         .arg(file_path.to_str()?)
         .spawn()
         .ok()?;
@@ -152,13 +161,18 @@ fn verilator_syntax(
     verilator_syntax_args: &[String],
 ) -> Option<Vec<Diagnostic>> {
 
-    let split_args: Vec<&str> = verilator_syntax_args
+    let mut split_args: Vec<&str> = verilator_syntax_args
     .iter()
     .flat_map(|s| s.split_whitespace())
     .collect();
 
 
     let cwd = file_path.parent().unwrap();
+
+    if cwd.join("includes.f").exists() {
+        split_args.push("-f");
+        split_args.push("./includes.f");
+    }
 
     debug!("Current working directory: {:?}", cwd); 
     let mut child = Command::new(verilator_syntax_path)
